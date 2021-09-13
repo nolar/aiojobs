@@ -14,15 +14,15 @@ else:  # pragma: no cover
 
 class Scheduler(*bases):
     def __init__(self, *, close_timeout, limit, pending_limit,
-                 exception_handler, loop):
-        self._loop = loop
+                 exception_handler):
+        loop = asyncio.get_running_loop()
         self._jobs = set()
         self._close_timeout = close_timeout
         self._limit = limit
         self._exception_handler = exception_handler
-        self._failed_tasks = asyncio.Queue(loop=loop)
+        self._failed_tasks = asyncio.Queue()
         self._failed_task = loop.create_task(self._wait_failed())
-        self._pending = asyncio.Queue(maxsize=pending_limit, loop=loop)
+        self._pending = asyncio.Queue(maxsize=pending_limit)
         self._closed = False
 
     def __iter__(self):
@@ -70,7 +70,7 @@ class Scheduler(*bases):
     async def spawn(self, coro):
         if self._closed:
             raise RuntimeError("Scheduling a new job after closing")
-        job = Job(coro, self, self._loop)
+        job = Job(coro, self)
         should_start = (self._limit is None or
                         self.active_count < self._limit)
         self._jobs.add(job)
@@ -94,7 +94,7 @@ class Scheduler(*bases):
                 self._pending.get_nowait()
             await asyncio.gather(
                 *[job._close(self._close_timeout) for job in jobs],
-                loop=self._loop, return_exceptions=True)
+                return_exceptions=True)
             self._jobs.clear()
         self._failed_tasks.put_nowait(None)
         await self._failed_task
@@ -102,7 +102,7 @@ class Scheduler(*bases):
     def call_exception_handler(self, context):
         handler = self._exception_handler
         if handler is None:
-            handler = self._loop.call_exception_handler(context)
+            handler = asyncio.get_running_loop().call_exception_handler(context)
         else:
             handler(self, context)
 
